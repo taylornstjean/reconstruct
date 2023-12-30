@@ -6,7 +6,7 @@ from bisect import bisect_left
 
 class Hough:
 
-    def __init__(self, points: np.ndarray, n_min, k_max, dx):
+    def __init__(self, points: np.ndarray, n_min, k_max, dx, n_hood):
 
         self.points, self.__offset = self.translate_to_origin(points)
         self.prime_range = self.get_prime_range(self.points)
@@ -14,12 +14,13 @@ class Hough:
         self.n_min = n_min
         self.k_max = k_max
         self.dx = dx
+        self.n_hood = n_hood
 
         # initialize vertices attr
         self.vertices = None
 
         # define parameter discretization
-        self.b_discrete = self.b_get_discretization(3)
+        self.b_discrete = self.b_get_discretization(4)
         self.xp_discrete = self.yp_discrete = np.arange(*self.prime_range, dx)
 
         # initialize sparse accumulator
@@ -30,7 +31,7 @@ class Hough:
         fig = plt.figure(figsize=(10, 10))
         ax = fig.add_subplot(projection="3d")
 
-        v = np.arange(-10, 10, 1)
+        v = np.arange(*self.prime_range, self.dx)
 
         lines = []
 
@@ -41,10 +42,13 @@ class Hough:
                 break
 
             xp = self.xp_discrete[params[0]]
-            yp = self.yp_discrete[params[1]]
+            yp = self.xp_discrete[params[1]]
             b = self.b_discrete[params[2]]
 
             point = self.point_from_prime(xp, yp, b)
+
+            # print(f"Plotting line --> [{point[0]}, {point[1]}, {point[2]}] + t[{b[0]}, {b[1]}, {b[2]}]")
+
             lines.append([point, b])
 
         for [point, b] in lines:
@@ -58,35 +62,61 @@ class Hough:
 
         maximum = max(self.A, key=self.A.get)
         value = self.A[maximum]
-        del self.A[maximum]
+
+        self.clear_nhood(maximum)
 
         return maximum, value
 
+    def clear_nhood(self, params):
+
+        xp = params[0]
+        yp = params[1]
+        b = self.b_discretize(self.b_discrete[params[2]])
+
+        for i in np.arange(xp - self.n_hood / 2, xp + self.n_hood / 2, 1):
+            for j in np.arange(yp - self.n_hood / 2, yp + self.n_hood / 2, 1):
+                for k in b:
+                    try:
+                        del self.A[(int(i), int(j), int(k))]
+                    except KeyError:
+                        pass
+
     def test(self):
 
-        point = np.array([1, 1, 1])
-        b = np.array([0, 1, 1]) / np.sqrt(2)
+        points = np.array([
+            [1, 1, 1],
+            [1, 2, 2],
+            [1, 3, 3],
+            [1, 4, 4]
+        ])
 
-        print(f"a + tb = ({point[0]}, {point[1]}, {point[2]}) + t({b[0]}, {b[1]}, {b[2]})")
+        self.points = points
 
-        xp = self.x_prime(point, b)
-        yp = self.y_prime(point, b)
+        self.increment_accumulator()
 
-        proc_point = self.point_from_prime(self.xp_discrete[xp], self.xp_discrete[yp], b)
-        print(f"Processed function a + tb: = ({proc_point[0]}, {proc_point[1]}, {proc_point[2]}) + t({b[0]}, {b[1]}, {b[2]})")
+        self.plot_accumulator()
 
     def increment_accumulator(self):
 
-        for p in [self.points[0]]:
+        for p in self.points:
+            # print("\033[92m", "Point --> ", p, "\033[0m")
+            # print("-------------------------------------------------------------------")
             for i, b in enumerate(self.b_discrete):
+                # print("Index, Direction --> ", i, ",", b)
 
                 xp_i = self.x_prime(p, b)
                 yp_i = self.y_prime(p, b)
 
+                # print(f'\033[94m(x\', y\', i), ({xp_i}, {yp_i}, {i}), ({self.xp_discrete[xp_i]}, {self.yp_discrete[yp_i]}, {b})\033[0m')
+
                 try:
                     self.A[(xp_i, yp_i, i)] += 1
+                    # print(f"Incremented ({xp_i}, {yp_i}, {i}) to {self.A[(xp_i, yp_i, i)]}")
                 except KeyError:
                     self.A[(xp_i, yp_i, i)] = 1
+                    # print(f"\033[93mNew Entry ({xp_i}, {yp_i}, {i})\033[0m")
+
+                # print("-------------------------------------------------------------------")
 
     @staticmethod
     def point_from_prime(xp, yp, b):
@@ -115,7 +145,7 @@ class Hough:
             [[0, 1 * a, r * b] for a, b in factors],
             [[1 * a, r * b, 0] for a, b in factors],
             [[r * a, 0, 1 * b] for a, b in factors]
-        ))
+        ), axis=0)
 
         self.normalize_1e8()
 
@@ -233,18 +263,24 @@ class Hough:
             np.max(zs) - np.min(zs)
         ]) / 2
 
+        # print(f"d = {d}")
+
         half_mag = np.linalg.norm(d / 2)
 
-        return [-half_mag * 1.1, half_mag * 1.1]  # add 10% buffer
+        return [-half_mag * 2, half_mag * 2]  # add 10% buffer
 
     def x_prime(self, p, b):
+        # print(f"\nx-Prime Received Input --> p = ({p[0]}, {p[1]}, {p[2]}), b = ({b[0]}, {b[1]}, {b[2]})")
         xp = (1 - b[0] ** 2 / (1 + b[2])) * p[0] - b[0] * b[1] / (1 + b[2]) * p[1] - b[0] * p[2]
         index = self.xy_discretize(xp)
+        # print(f"Output --> i = {index}, x\' = {xp}")
         return index
 
     def y_prime(self, p, b):
-        yp = - b[0] * b[1] / (1 + b[2]) * p[0] + 1 - (b[1] ** 2 / (1 + b[2])) * p[1] - b[1] * p[2]
+        # print(f"y-Prime Received Input --> p = ({p[0]}, {p[1]}, {p[2]}), b = ({b[0]}, {b[1]}, {b[2]})")
+        yp = - b[0] * b[1] / (1 + b[2]) * p[0] + (1 - (b[1] ** 2 / (1 + b[2]))) * p[1] - (b[1] * p[2])
         index = self.xy_discretize(yp)
+        # print(f"Output --> i = {index}, y\' = {yp}\n")
         return index
 
     def xy_discretize(self, v):
@@ -252,20 +288,29 @@ class Hough:
         pos = bisect_left(self.xp_discrete.tolist(), v)
 
         if pos == 0:
-            print(f"Prime: ({v}) --> {pos}: ({self.xp_discrete[pos]})")
             return 0
         if pos == np.shape(self.xp_discrete)[0]:
-            print(f"Prime: ({v}) --> {pos - 1}: ({self.xp_discrete[pos - 1]})")
             return np.shape(self.xp_discrete)[0] - 1
 
         before = self.xp_discrete[pos - 1]
         after = self.xp_discrete[pos]
 
         if after - v < v - before:
-            print(f"Prime: ({v}) --> {pos}: ({self.xp_discrete[pos]})")
             return pos
-        print(f"Prime: ({v}) --> {pos - 1}: ({self.xp_discrete[pos - 1]})")
         return pos - 1
+
+    def b_discretize(self, v):
+
+        angles = {}
+        for i, d in enumerate(self.b_discrete):
+            dp = d[0] * v[0] + d[1] * v[1] + d[2] * v[2]
+            angles[i] = dp
+
+        s_angles = {k: v for k, v in sorted(angles.items(), key=lambda item: item[1])}
+
+        pos = list(s_angles.keys())[-self.n_hood:]
+
+        return pos
 
     @staticmethod
     def plot(points):
