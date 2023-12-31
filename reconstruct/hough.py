@@ -20,7 +20,7 @@ class Hough:
         self.vertices = None
 
         # define parameter discretization
-        self.b_discrete = self.b_get_discretization(4)
+        self.b_discrete = self.b_get_discretization(5)
         self.xp_discrete = self.yp_discrete = np.arange(*self.prime_range, dx)
 
         # initialize sparse accumulator
@@ -30,6 +30,8 @@ class Hough:
 
         fig = plt.figure(figsize=(10, 10))
         ax = fig.add_subplot(projection="3d")
+
+        ax.set_zlim(-3, 3)
 
         v = np.arange(*self.prime_range, self.dx)
 
@@ -71,7 +73,7 @@ class Hough:
 
         xp = params[0]
         yp = params[1]
-        b = self.b_discretize(self.b_discrete[params[2]])
+        b = self.b_get_neighbors(self.b_discrete[params[2]])
 
         for i in np.arange(xp - self.n_hood / 2, xp + self.n_hood / 2, 1):
             for j in np.arange(yp - self.n_hood / 2, yp + self.n_hood / 2, 1):
@@ -80,21 +82,6 @@ class Hough:
                         del self.A[(int(i), int(j), int(k))]
                     except KeyError:
                         pass
-
-    def test(self):
-
-        points = np.array([
-            [1, 1, 1],
-            [1, 2, 2],
-            [1, 3, 3],
-            [1, 4, 4]
-        ])
-
-        self.points = points
-
-        self.increment_accumulator()
-
-        self.plot_accumulator()
 
     def increment_accumulator(self):
 
@@ -299,7 +286,7 @@ class Hough:
             return pos
         return pos - 1
 
-    def b_discretize(self, v):
+    def b_get_neighbors(self, v):
 
         angles = {}
         for i, d in enumerate(self.b_discrete):
