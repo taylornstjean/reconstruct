@@ -1,27 +1,30 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.neighbors import KDTree
 from bisect import bisect_left
+from tqdm import tqdm
+import sys
+
+from .geometry import Icosahedron
 
 
 class Hough:
 
-    def __init__(self, points: np.ndarray, n_min, k_max, dx, n_hood):
+    __slots__ = ("points", "__offset", "prime_range", "n_abs", "k_max", "dl", "n_hood", "b", "xy", "A")
+
+    def __init__(self, points: np.ndarray, n_abs, k_max, dl, n_hood):
 
         self.points, self.__offset = self.translate_to_origin(points)
         self.prime_range = self.get_prime_range(self.points)
 
-        self.n_min = n_min
+        self.n_abs = n_abs
         self.k_max = k_max
-        self.dx = dx
+        self.dl = dl
         self.n_hood = n_hood
 
-        # initialize vertices attr
-        self.vertices = None
-
         # define parameter discretization
-        self.b_discrete = self.b_get_discretization(5)
-        self.xp_discrete = self.yp_discrete = np.arange(*self.prime_range, dx)
+        icosahedron = Icosahedron(g=4)
+        self.b = icosahedron.vertices()
+        self.xy = np.arange(*self.prime_range, dl)
 
         # initialize sparse accumulator
         self.A = {}
@@ -33,25 +36,21 @@ class Hough:
 
         ax.set_zlim(-3, 3)
 
-        v = np.arange(*self.prime_range, self.dx)
+        v = np.arange(*self.prime_range, self.dl)
 
         lines = []
 
-        for _ in range(self.k_max):
-            params, val = self.get_accumulator_max()
+        self.sort_accumulator()
 
-            if val < self.n_min:
+        print("\033[96m[{}]\033[0m".format("Getting Lines".center(30)))
+
+        for _ in range(self.k_max):
+            vote, points = self.get_accumulator_max()
+
+            if self.n_abs and vote < self.n_abs:
                 break
 
-            xp = self.xp_discrete[params[0]]
-            yp = self.xp_discrete[params[1]]
-            b = self.b_discrete[params[2]]
-
-            point = self.point_from_prime(xp, yp, b)
-
-            # print(f"Plotting line --> [{point[0]}, {point[1]}, {point[2]}] + t[{b[0]}, {b[1]}, {b[2]}]")
-
-            lines.append([point, b])
+            lines.append(self.svd_optimise(points))
 
         for [point, b] in lines:
             ax.plot(point[0] + v * b[0], point[1] + v * b[1], point[2] + v * b[2])
@@ -60,20 +59,28 @@ class Hough:
 
         plt.show()
 
+    def sort_accumulator(self):
+
+        print("\033[96m[{}]\033[0m".format("Running Accumulator Sort".center(30)))
+
+        sorted_A = dict(sorted(self.A.items(), key=lambda x: x[1][0]))
+        self.A = sorted_A
+
     def get_accumulator_max(self):
 
-        maximum = max(self.A, key=self.A.get)
-        value = self.A[maximum]
+        maximum, value = list(self.A.items())[-1]
+        vote = value[0]
+        points = value[1]
 
         self.clear_nhood(maximum)
 
-        return maximum, value
+        return vote, points
 
     def clear_nhood(self, params):
 
         xp = params[0]
         yp = params[1]
-        b = self.b_get_neighbors(self.b_discrete[params[2]])
+        b = self.b_get_neighbors(self.b[params[2]])
 
         for i in np.arange(xp - self.n_hood / 2, xp + self.n_hood / 2, 1):
             for j in np.arange(yp - self.n_hood / 2, yp + self.n_hood / 2, 1):
@@ -85,25 +92,20 @@ class Hough:
 
     def increment_accumulator(self):
 
-        for p in self.points:
-            # print("\033[92m", "Point --> ", p, "\033[0m")
-            # print("-------------------------------------------------------------------")
-            for i, b in enumerate(self.b_discrete):
-                # print("Index, Direction --> ", i, ",", b)
+        _iter = tqdm(self.points)
+        for i, p in enumerate(_iter):
+            for j, b in enumerate(self.b):
 
                 xp_i = self.x_prime(p, b)
                 yp_i = self.y_prime(p, b)
 
-                # print(f'\033[94m(x\', y\', i), ({xp_i}, {yp_i}, {i}), ({self.xp_discrete[xp_i]}, {self.yp_discrete[yp_i]}, {b})\033[0m')
-
                 try:
-                    self.A[(xp_i, yp_i, i)] += 1
-                    # print(f"Incremented ({xp_i}, {yp_i}, {i}) to {self.A[(xp_i, yp_i, i)]}")
+                    self.A[(xp_i, yp_i, j)][0] += 1
+                    self.A[(xp_i, yp_i, j)][1].append(i)
                 except KeyError:
-                    self.A[(xp_i, yp_i, i)] = 1
-                    # print(f"\033[93mNew Entry ({xp_i}, {yp_i}, {i})\033[0m")
+                    self.A[(xp_i, yp_i, j)] = [1, [i]]
 
-                # print("-------------------------------------------------------------------")
+            _iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
 
     @staticmethod
     def point_from_prime(xp, yp, b):
@@ -122,105 +124,6 @@ class Hough:
         point = np.add(xp * x_coeff, yp * y_coeff)
 
         return point
-
-    def b_get_discretization(self, n):
-
-        r = (1 + np.sqrt(5)) / 2
-        factors = np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]]) * 1e8  # compute as integers for better precision
-
-        self.vertices = np.concatenate((
-            [[0, 1 * a, r * b] for a, b in factors],
-            [[1 * a, r * b, 0] for a, b in factors],
-            [[r * a, 0, 1 * b] for a, b in factors]
-        ), axis=0)
-
-        self.normalize_1e8()
-
-        for _ in range(n):
-            self.tessellate()
-
-        self.true_normalize()
-
-        to_delete = []
-        for i, v in enumerate(self.vertices):
-            if v[2] < 0:
-                to_delete.append(i)
-
-        self.vertices = np.delete(self.vertices, to_delete, axis=0)
-
-        return self.vertices
-
-    def tessellate(self):
-
-        adjacent = self.get_adjacent()
-        omegas = self.get_omegas(adjacent)
-        self.vertices = np.concatenate((self.vertices, omegas))
-        self.normalize_1e8()
-        self.remove_duplicates()
-
-    @staticmethod
-    def get_omegas(adjacent):
-
-        to_append = []
-        for entry in adjacent:
-            p1, p2 = entry["p1"], entry["p2"]
-            ave_vector = np.int64(np.add(p1, p2) / 2)
-            to_append.append(ave_vector)
-
-        return to_append
-
-    def remove_duplicates(self):
-
-        self.vertices = np.unique(self.vertices, axis=0)
-
-    def get_adjacent(self):
-
-        vertices = self.vertices
-
-        adjacent_v = []
-        kdtree = KDTree(vertices)
-        for i, point in enumerate(vertices):
-            dist, points = kdtree.query(np.array([point]), 7)
-            for d, p in zip(dist[0][1::], vertices[points[0][1::]]):
-                adjacent_v.append({"dist": np.int64(d), "p1": np.int64(point), "p2": np.int64(p)})
-
-        average_dist = np.average([a["dist"] for a in adjacent_v])
-        to_delete = []
-        for i, entry in enumerate(adjacent_v):
-            if entry["dist"] > (1.1 * average_dist) or entry["dist"] < (0.8 * average_dist):
-                to_delete.append(i)
-
-        for i in sorted(to_delete, reverse=True):
-            del adjacent_v[i]
-
-        return adjacent_v
-
-    def normalize_1e8(self):
-
-        normalized = []
-        for v in self.vertices:
-            mag = np.linalg.norm(v) / 1e8
-            normalized.append(np.int64(np.divide(v, mag)))
-
-        self.vertices = np.array(normalized)
-
-    def true_normalize(self):
-
-        normalized = []
-        for v in self.vertices:
-            mag = np.linalg.norm(v)
-            normalized.append(np.around(np.divide(v, mag), decimals=8))
-
-        self.vertices = np.array(normalized)
-
-    @staticmethod
-    def sph_to_cart(theta, phi):
-
-        x = np.cos(theta) * np.cos(phi)
-        y = np.cos(theta) * np.sin(phi)
-        z = np.sin(theta)
-
-        return [x, y, z]
 
     @staticmethod
     def translate_to_origin(points):
@@ -250,37 +153,31 @@ class Hough:
             np.max(zs) - np.min(zs)
         ]) / 2
 
-        # print(f"d = {d}")
-
         half_mag = np.linalg.norm(d / 2)
 
-        return [-half_mag * 2, half_mag * 2]  # add 10% buffer
+        return [-half_mag * 2, half_mag * 2]  # add buffer
 
     def x_prime(self, p, b):
-        # print(f"\nx-Prime Received Input --> p = ({p[0]}, {p[1]}, {p[2]}), b = ({b[0]}, {b[1]}, {b[2]})")
         xp = (1 - b[0] ** 2 / (1 + b[2])) * p[0] - b[0] * b[1] / (1 + b[2]) * p[1] - b[0] * p[2]
         index = self.xy_discretize(xp)
-        # print(f"Output --> i = {index}, x\' = {xp}")
         return index
 
     def y_prime(self, p, b):
-        # print(f"y-Prime Received Input --> p = ({p[0]}, {p[1]}, {p[2]}), b = ({b[0]}, {b[1]}, {b[2]})")
         yp = - b[0] * b[1] / (1 + b[2]) * p[0] + (1 - (b[1] ** 2 / (1 + b[2]))) * p[1] - (b[1] * p[2])
         index = self.xy_discretize(yp)
-        # print(f"Output --> i = {index}, y\' = {yp}\n")
         return index
 
     def xy_discretize(self, v):
 
-        pos = bisect_left(self.xp_discrete.tolist(), v)
+        pos = bisect_left(self.xy.tolist(), v)
 
         if pos == 0:
             return 0
-        if pos == np.shape(self.xp_discrete)[0]:
-            return np.shape(self.xp_discrete)[0] - 1
+        if pos == np.shape(self.xy)[0]:
+            return np.shape(self.xy)[0] - 1
 
-        before = self.xp_discrete[pos - 1]
-        after = self.xp_discrete[pos]
+        before = self.xy[pos - 1]
+        after = self.xy[pos]
 
         if after - v < v - before:
             return pos
@@ -289,7 +186,7 @@ class Hough:
     def b_get_neighbors(self, v):
 
         angles = {}
-        for i, d in enumerate(self.b_discrete):
+        for i, d in enumerate(self.b):
             dp = d[0] * v[0] + d[1] * v[1] + d[2] * v[2]
             angles[i] = dp
 
@@ -299,12 +196,12 @@ class Hough:
 
         return pos
 
-    @staticmethod
-    def plot(points):
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(projection="3d")
+    def svd_optimise(self, indices):
 
-        ax.scatter(points[:, 0], points[:, 1], points[:, 2])
+        points = self.points[indices]
 
-        plt.show()
+        mean = points.mean(axis=0)
+        _, _, vv = np.linalg.svd(points - mean, full_matrices=False)
+
+        return [mean, vv[0]]
 

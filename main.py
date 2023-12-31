@@ -1,15 +1,23 @@
 from reconstruct import Hough
 import numpy as np
-import random
 
 
 def main():
-    v = np.arange(0, 4, 1)
+    v = np.arange(-2, 2, 1)
 
-    line_count = 5
+    line_count = 100
 
-    point = [np.array([np.random.randint(-1000, 1000), np.random.randint(-1000, 1000), 0]) for _ in range(line_count)]
-    direction = [np.array([np.random.randint(-1000, 1000), np.random.randint(-1000, 1000), 100]) / 10 for _ in range(line_count)]
+    point = [np.array([
+        np.random.randint(-1000, 1000),
+        np.random.randint(-1000, 1000),
+        0
+    ]) / 10 for _ in range(line_count)]
+
+    direction = [np.array([
+        np.random.randint(-1000, 1000),
+        np.random.randint(-1000, 1000),
+        1000
+    ]) / 100 for _ in range(line_count)]
 
     points = []
     for i, p in enumerate(point):
@@ -18,8 +26,9 @@ def main():
             points.append(a)
 
     points = np.array(points) / 10
+    points += np.random.normal(size=points.shape) * [0.1, 0.1, 0]
 
-    hough = Hough(points, 1, line_count, 1, 10)
+    hough = Hough(points, 4, line_count, 0.5, 30)
 
     hough.increment_accumulator()
     hough.plot_accumulator()
