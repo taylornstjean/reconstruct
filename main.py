@@ -3,9 +3,9 @@ import numpy as np
 
 
 def main():
-    v = np.arange(-2, 2, 1)
+    v = np.arange(-2, 3, 1)
 
-    line_count = 40
+    line_count = 30
 
     point = [np.array([
         np.random.randint(-1000, 1000),
@@ -16,7 +16,7 @@ def main():
     direction = [np.array([
         np.random.randint(-1000, 1000),
         np.random.randint(-1000, 1000),
-        1000
+        100
     ]) / 100 for _ in range(line_count)]
 
     points = []
@@ -25,10 +25,10 @@ def main():
         for a in line:
             points.append(a)
 
-    points = np.array(points) / 10
+    points = np.array(points)
     points += np.random.normal(size=points.shape) * [0.01, 0.01, 0]
 
-    hough = Hough(points, 4, line_count, 0.3, 20)
+    hough = Hough(points, 4, line_count, 1)
 
     hough.find_lines()
 

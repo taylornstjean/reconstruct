@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from bisect import bisect_left
 from tqdm import tqdm
 import sys
+import json
 
 from .geometry import Icosahedron
 
@@ -11,7 +11,7 @@ class Hough:
 
     __slots__ = ("points", "__offset", "prime_range", "n_abs", "k_max", "dl", "n_hood", "max_rmse", "b", "xy", "A")
 
-    def __init__(self, points: np.ndarray, n_abs, k_max, dl, n_hood):
+    def __init__(self, points: np.ndarray, n_abs, k_max, dl, n_hood=None):
 
         self.points, self.__offset = self.translate_to_origin(points)
         self.prime_range = self.get_prime_range(self.points)
@@ -23,7 +23,7 @@ class Hough:
         self.max_rmse = 0.1
 
         # define parameter discretization
-        icosahedron = Icosahedron(g=4)
+        icosahedron = Icosahedron(g=5)
         self.b = icosahedron.vertices()
         self.xy = np.arange(*self.prime_range, dl)
 
@@ -35,11 +35,13 @@ class Hough:
         lines = []
         used_points = []
 
-        for _ in range(self.k_max):
+        while True:
 
-            vote, points = self.get_accumulator_max()
+            points = list(self.get_accumulator_max())
+            print(points)
 
-            if self.n_abs and vote < self.n_abs:
+            if self.n_abs and len(points) < self.n_abs:
+                print("break")
                 break
 
             line_params = self.svd_optimise(points)
@@ -59,39 +61,12 @@ class Hough:
 
     def find_lines(self):
 
-        def _iterate(points=None):
+        self.increment_accumulator()
 
-            self.increment_accumulator(points)
+        print("\033[96m[{}]\033[0m".format("Getting Lines".center(30)))
 
-            print("\033[96m[{}]\033[0m".format("Getting Lines".center(30)))
-
-            self.sort_accumulator()
-
-            return self.run_detection()
-
-        lines, used_points = _iterate()
-
-        max_iter = 10
-        i = 0
-
-        while len(self.points) != len(used_points) and i < max_iter:
-            rerun_points = self.points
-            rerun_points = np.delete(rerun_points, used_points, axis=0)
-
-            _lines, _used_points = _iterate(rerun_points)
-
-            if not _lines:
-                print("No lines found.")
-                i = max_iter
-                continue
-
-            for line in _lines:
-                lines.append(line)
-
-            for point in _used_points:
-                used_points.append(point)
-
-            i += 1
+        self.sort_accumulator()
+        lines, used_points = self.run_detection()
 
         self.plot_accumulator(lines)
 
@@ -113,32 +88,54 @@ class Hough:
 
     def sort_accumulator(self):
 
-        sorted_A = dict(sorted(self.A.items(), key=lambda x: x[1][0]))
+        sorted_A = dict(sorted(self.A.items(), key=lambda x: len(x[1])))
         self.A = sorted_A
+
+    def bin_accumulator(self):
+
+        def _angle_diff(v, other_v):
+            return np.arccos(np.dot(v, other_v))
+
+        b_tolerance = 2 * np.pi / 180
+        xy_tolerance = 0.2
+
+        A = {}
+        _ignore = []
+
+        _iter = tqdm(self.A.items())
+        for param, data in _iter:
+            A[param] = data
+            other_params = {o_p: o_d for o_p, o_d in self.A.items() if o_p not in A.keys() and o_p not in _ignore}
+
+            #angles = _angle_diff(np.array(param[2]), np.array([np.array(v) for v in other_params.values()]))
+
+            for op, od in other_params.items():
+                b1 = np.array(param[2])
+                b2 = np.array(op[2])
+
+                param_a = list(param)
+                op_a = list(op)
+
+                sep_angle = np.arccos(np.dot(b1, b2))
+                dx = np.abs(op_a[0] - param_a[0])
+                dy = np.abs(op_a[1] - param_a[1])
+
+                if (sep_angle < b_tolerance) and (dx < xy_tolerance) and (dy < xy_tolerance):
+                    _ignore.append(op)
+                    A[param].update(od)
+
+        self.A = A
 
     def get_accumulator_max(self):
 
-        maximum, value = list(self.A.items())[-1]
-        vote = value[0]
-        points = value[1]
+        params, points = list(self.A.items())[-1]
 
-        self.clear_nhood(maximum)
+        try:
+            del self.A[params]
+        except KeyError:
+            pass
 
-        return vote, points
-
-    def clear_nhood(self, params):
-
-        xp = params[0]
-        yp = params[1]
-        b = self.b_get_neighbors(self.b[params[2]])
-
-        for i in np.arange(xp - self.n_hood / 2, xp + self.n_hood / 2, 1):
-            for j in np.arange(yp - self.n_hood / 2, yp + self.n_hood / 2, 1):
-                for k in b:
-                    try:
-                        del self.A[(int(i), int(j), int(k))]
-                    except KeyError:
-                        pass
+        return points
 
     def increment_accumulator(self, points=None):
 
@@ -147,20 +144,31 @@ class Hough:
 
         self.A = {}
 
+        run_points = []
         _iter = tqdm(points)
         for i, p in enumerate(_iter):
-            for j, b in enumerate(self.b):
+            run_points.append(i)
+            other_points = {k: a for k, a in enumerate(points) if k not in run_points}
 
-                xp_i = self.x_prime(p, b)
-                yp_i = self.y_prime(p, b)
+            for j, (opi, op) in enumerate(other_points.items()):
 
+                b = tuple(self.get_b(p, op))
+                xp = self.x_prime(p, b)
+                yp = self.y_prime(p, b)
+
+                _params = (xp, yp, b)
                 try:
-                    self.A[(xp_i, yp_i, j)][0] += 1
-                    self.A[(xp_i, yp_i, j)][1].append(i)
+                    self.A[_params].add(i)
                 except KeyError:
-                    self.A[(xp_i, yp_i, j)] = [1, [i]]
+                    self.A[_params] = {i, opi}
 
             _iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
+
+        self.bin_accumulator()
+
+        with open("A.json", "w") as f:
+            A_stringify = {str(k): list(v) for k, v in self.A.items()}
+            json.dump(A_stringify, f)
 
     @staticmethod
     def point_from_prime(xp, yp, b):
@@ -213,48 +221,25 @@ class Hough:
         return [-half_mag * 2, half_mag * 2]  # add buffer
 
     def x_prime(self, p, b):
+
         xp = (1 - b[0] ** 2 / (1 + b[2])) * p[0] - b[0] * b[1] / (1 + b[2]) * p[1] - b[0] * p[2]
-        index = self.xy_discretize(xp)
-        return index
+        return xp
 
     def y_prime(self, p, b):
+
         yp = - b[0] * b[1] / (1 + b[2]) * p[0] + (1 - (b[1] ** 2 / (1 + b[2]))) * p[1] - (b[1] * p[2])
-        index = self.xy_discretize(yp)
-        return index
+        return yp
 
-    def xy_discretize(self, v):
+    def get_b(self, p1, p2):
 
-        pos = bisect_left(self.xy.tolist(), v)
+        b = p2 - p1 if (p2[2] > p1[2]) else p1 - p2
+        b_norm = b / np.linalg.norm(b)
 
-        if pos == 0:
-            return 0
-        if pos == np.shape(self.xy)[0]:
-            return np.shape(self.xy)[0] - 1
-
-        before = self.xy[pos - 1]
-        after = self.xy[pos]
-
-        if after - v < v - before:
-            return pos
-        return pos - 1
-
-    def b_get_neighbors(self, v):
-
-        angles = {}
-        for i, d in enumerate(self.b):
-            dp = d[0] * v[0] + d[1] * v[1] + d[2] * v[2]
-            angles[i] = dp
-
-        s_angles = {k: v for k, v in sorted(angles.items(), key=lambda item: item[1])}
-
-        pos = list(s_angles.keys())[-self.n_hood:]
-
-        return pos
+        return b_norm
 
     def svd_optimise(self, indices):
 
         points = self.points[indices]
-
         mean = points.mean(axis=0)
         _, _, vv = np.linalg.svd(points - mean, full_matrices=False)
 
@@ -276,6 +261,8 @@ class Hough:
                 calc_point = mean + (expect_y / direction[1]) * direction
             elif direction[0] != 0:
                 calc_point = mean + (expect_x / direction[0]) * direction
+            else:
+                raise ValueError("Line has invalid direction vector b = (0, 0, 0).")
 
             dx = calc_point[0] - p[0]
             dy = calc_point[1] - p[1]
