@@ -5,7 +5,7 @@ import numpy as np
 def main():
     v = np.arange(-2, 2, 1)
 
-    line_count = 100
+    line_count = 40
 
     point = [np.array([
         np.random.randint(-1000, 1000),
@@ -26,12 +26,11 @@ def main():
             points.append(a)
 
     points = np.array(points) / 10
-    points += np.random.normal(size=points.shape) * [0.1, 0.1, 0]
+    points += np.random.normal(size=points.shape) * [0.01, 0.01, 0]
 
-    hough = Hough(points, 4, line_count, 0.5, 30)
+    hough = Hough(points, 4, line_count, 0.3, 20)
 
-    hough.increment_accumulator()
-    hough.plot_accumulator()
+    hough.find_lines()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from .geometry import Icosahedron
 
 class Hough:
 
-    __slots__ = ("points", "__offset", "prime_range", "n_abs", "k_max", "dl", "n_hood", "b", "xy", "A")
+    __slots__ = ("points", "__offset", "prime_range", "n_abs", "k_max", "dl", "n_hood", "max_rmse", "b", "xy", "A")
 
     def __init__(self, points: np.ndarray, n_abs, k_max, dl, n_hood):
 
@@ -20,6 +20,7 @@ class Hough:
         self.k_max = k_max
         self.dl = dl
         self.n_hood = n_hood
+        self.max_rmse = 0.1
 
         # define parameter discretization
         icosahedron = Icosahedron(g=4)
@@ -29,7 +30,72 @@ class Hough:
         # initialize sparse accumulator
         self.A = {}
 
-    def plot_accumulator(self):
+    def run_detection(self):
+
+        lines = []
+        used_points = []
+
+        for _ in range(self.k_max):
+
+            vote, points = self.get_accumulator_max()
+
+            if self.n_abs and vote < self.n_abs:
+                break
+
+            line_params = self.svd_optimise(points)
+
+            _exists = False
+            for k in lines:
+                if np.all([np.allclose(v, line_params[i]) for i, v in enumerate(k)]):
+                    _exists = True
+
+            if (line_params[2] < self.max_rmse) and not _exists:
+                lines.append(line_params)
+
+                for p in points:
+                    used_points.append(p)
+
+        return lines, used_points
+
+    def find_lines(self):
+
+        def _iterate(points=None):
+
+            self.increment_accumulator(points)
+
+            print("\033[96m[{}]\033[0m".format("Getting Lines".center(30)))
+
+            self.sort_accumulator()
+
+            return self.run_detection()
+
+        lines, used_points = _iterate()
+
+        max_iter = 10
+        i = 0
+
+        while len(self.points) != len(used_points) and i < max_iter:
+            rerun_points = self.points
+            rerun_points = np.delete(rerun_points, used_points, axis=0)
+
+            _lines, _used_points = _iterate(rerun_points)
+
+            if not _lines:
+                print("No lines found.")
+                i = max_iter
+                continue
+
+            for line in _lines:
+                lines.append(line)
+
+            for point in _used_points:
+                used_points.append(point)
+
+            i += 1
+
+        self.plot_accumulator(lines)
+
+    def plot_accumulator(self, lines):
 
         fig = plt.figure(figsize=(10, 10))
         ax = fig.add_subplot(projection="3d")
@@ -38,21 +104,7 @@ class Hough:
 
         v = np.arange(*self.prime_range, self.dl)
 
-        lines = []
-
-        self.sort_accumulator()
-
-        print("\033[96m[{}]\033[0m".format("Getting Lines".center(30)))
-
-        for _ in range(self.k_max):
-            vote, points = self.get_accumulator_max()
-
-            if self.n_abs and vote < self.n_abs:
-                break
-
-            lines.append(self.svd_optimise(points))
-
-        for [point, b] in lines:
+        for [point, b, _, _] in lines:
             ax.plot(point[0] + v * b[0], point[1] + v * b[1], point[2] + v * b[2])
 
         ax.scatter(self.points[:, 0], self.points[:, 1], self.points[:, 2])
@@ -60,8 +112,6 @@ class Hough:
         plt.show()
 
     def sort_accumulator(self):
-
-        print("\033[96m[{}]\033[0m".format("Running Accumulator Sort".center(30)))
 
         sorted_A = dict(sorted(self.A.items(), key=lambda x: x[1][0]))
         self.A = sorted_A
@@ -90,9 +140,14 @@ class Hough:
                     except KeyError:
                         pass
 
-    def increment_accumulator(self):
+    def increment_accumulator(self, points=None):
 
-        _iter = tqdm(self.points)
+        if points is None:
+            points = self.points
+
+        self.A = {}
+
+        _iter = tqdm(points)
         for i, p in enumerate(_iter):
             for j, b in enumerate(self.b):
 
@@ -203,5 +258,30 @@ class Hough:
         mean = points.mean(axis=0)
         _, _, vv = np.linalg.svd(points - mean, full_matrices=False)
 
-        return [mean, vv[0]]
+        rmse = self.get_rmse(points, mean, vv[0])
 
+        return [np.around(mean, 4), np.around(vv[0], 4), np.around(rmse, 4), np.int64(len(points))]
+
+    def get_rmse(self, points, mean, direction):
+
+        errors = 0
+        for p in points:
+            expect_z = p[2]
+            expect_y = p[1]
+            expect_x = p[0]
+
+            if direction[2] != 0:
+                calc_point = mean + (expect_z / direction[2]) * direction
+            elif direction[1] != 0:
+                calc_point = mean + (expect_y / direction[1]) * direction
+            elif direction[0] != 0:
+                calc_point = mean + (expect_x / direction[0]) * direction
+
+            dx = calc_point[0] - p[0]
+            dy = calc_point[1] - p[1]
+
+            errors += dx ** 2 + dy ** 2
+
+        n = len(points)
+        rmse = np.sqrt(errors / n if n != 0 else 1)
+        return rmse
