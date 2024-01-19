@@ -9,23 +9,19 @@ from .geometry import Icosahedron
 
 class Hough:
 
-    __slots__ = ("points", "__offset", "prime_range", "n_abs", "k_max", "dl", "n_hood", "max_rmse", "b", "xy", "A")
+    def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, plot=False):
 
-    def __init__(self, points: np.ndarray, n_abs, k_max, dl, n_hood=None):
-
-        self.points, self.__offset = self.translate_to_origin(points)
+        self.points = points
         self.prime_range = self.get_prime_range(self.points)
 
         self.n_abs = n_abs
         self.k_max = k_max
-        self.dl = dl
-        self.n_hood = n_hood
+        self.dl = 1
         self.max_rmse = 0.1
+        self.btol = btol
+        self.xytol = xytol
 
-        # define parameter discretization
-        icosahedron = Icosahedron(g=5)
-        self.b = icosahedron.vertices()
-        self.xy = np.arange(*self.prime_range, dl)
+        self.plot = plot
 
         # initialize sparse accumulator
         self.A = {}
@@ -38,10 +34,8 @@ class Hough:
         while True:
 
             points = list(self.get_accumulator_max())
-            print(points)
 
             if self.n_abs and len(points) < self.n_abs:
-                print("break")
                 break
 
             line_params = self.svd_optimise(points)
@@ -63,12 +57,12 @@ class Hough:
 
         self.increment_accumulator()
 
-        print("\033[96m[{}]\033[0m".format("Getting Lines".center(30)))
-
         self.sort_accumulator()
         lines, used_points = self.run_detection()
 
-        self.plot_accumulator(lines)
+        if self.plot is True:
+            self.plot_accumulator(lines)
+        return lines
 
     def plot_accumulator(self, lines):
 
@@ -96,18 +90,18 @@ class Hough:
         def _angle_diff(v, other_v):
             return np.arccos(np.dot(v, other_v))
 
-        b_tolerance = 2 * np.pi / 180
-        xy_tolerance = 0.2
+        b_tolerance = self.btol
+        xy_tolerance = self.xytol
 
         A = {}
         _ignore = []
 
-        _iter = tqdm(self.A.items())
-        for param, data in _iter:
+        # _iter = tqdm(self.A.items())
+        for param, data in self.A.items():
             A[param] = data
             other_params = {o_p: o_d for o_p, o_d in self.A.items() if o_p not in A.keys() and o_p not in _ignore}
 
-            #angles = _angle_diff(np.array(param[2]), np.array([np.array(v) for v in other_params.values()]))
+            #angles = _angle_diff(np.array(param[2]), np.array([np.array(v) for v in other_params.keys()]))
 
             for op, od in other_params.items():
                 b1 = np.array(param[2])
@@ -145,8 +139,8 @@ class Hough:
         self.A = {}
 
         run_points = []
-        _iter = tqdm(points)
-        for i, p in enumerate(_iter):
+        # _iter = tqdm(points)
+        for i, p in enumerate(points):
             run_points.append(i)
             other_points = {k: a for k, a in enumerate(points) if k not in run_points}
 
@@ -162,7 +156,7 @@ class Hough:
                 except KeyError:
                     self.A[_params] = {i, opi}
 
-            _iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
+            #_iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
 
         self.bin_accumulator()
 
@@ -187,21 +181,6 @@ class Hough:
         point = np.add(xp * x_coeff, yp * y_coeff)
 
         return point
-
-    @staticmethod
-    def translate_to_origin(points):
-
-        xs = points[:, 0]
-        ys = points[:, 1]
-        zs = points[:, 2]
-
-        c = np.array([
-            np.max(xs) + np.min(xs),
-            np.max(ys) + np.min(ys),
-            np.max(zs) + np.min(zs)
-        ]) / 2
-
-        return np.subtract(points, c), c
 
     @staticmethod
     def get_prime_range(points):
