@@ -3,6 +3,9 @@ from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 
 
+#  -------------------  MODULE NOT USED  -------------------  #
+
+
 class Icosahedron:
 
     def __init__(self, g):

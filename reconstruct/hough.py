@@ -1,15 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.neighbors import KDTree
 from tqdm import tqdm
 import sys
 import json
+import time
 
 from .geometry import Icosahedron
 
 
 class Hough:
 
-    def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, plot=False):
+    def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, min_angle, plot=False):
 
         self.points = points
         self.prime_range = self.get_prime_range(self.points)
@@ -18,8 +20,10 @@ class Hough:
         self.k_max = k_max
         self.dl = 1
         self.max_rmse = 0.1
+
         self.btol = btol
         self.xytol = xytol
+        self.min_angle = min_angle
 
         self.plot = plot
 
@@ -33,7 +37,10 @@ class Hough:
 
         while True:
 
-            points = list(self.get_accumulator_max())
+            try:
+                points = list(self.get_accumulator_max())
+            except TypeError:
+                break
 
             if self.n_abs and len(points) < self.n_abs:
                 break
@@ -55,10 +62,14 @@ class Hough:
 
     def find_lines(self):
 
+        time_now = time.time()
+
         self.increment_accumulator()
 
         self.sort_accumulator()
         lines, used_points = self.run_detection()
+
+        print("--- Complete in {:.4f} seconds ---".format(time.time() - time_now))
 
         if self.plot is True:
             self.plot_accumulator(lines)
@@ -66,7 +77,7 @@ class Hough:
 
     def plot_accumulator(self, lines):
 
-        fig = plt.figure(figsize=(10, 10))
+        fig = plt.figure(figsize=(8, 8))
         ax = fig.add_subplot(projection="3d")
 
         ax.set_zlim(-3, 3)
@@ -87,42 +98,48 @@ class Hough:
 
     def bin_accumulator(self):
 
-        def _angle_diff(v, other_v):
-            return np.arccos(np.dot(v, other_v))
-
-        b_tolerance = self.btol
-        xy_tolerance = self.xytol
+        def _dist_from_rad(rad):
+            return np.sqrt(2 * (1 - np.cos(rad)))
 
         A = {}
-        _ignore = []
+        _ignore = set()
 
-        # _iter = tqdm(self.A.items())
-        for param, data in self.A.items():
-            A[param] = data
-            other_params = {o_p: o_d for o_p, o_d in self.A.items() if o_p not in A.keys() and o_p not in _ignore}
+        query_params = {op: od for op, od in self.A.items()}
 
-            #angles = _angle_diff(np.array(param[2]), np.array([np.array(v) for v in other_params.keys()]))
+        xy_kdtree = KDTree([[p[0], p[1]] for p in query_params])
+        b_kdtree = KDTree([list(p[2]) for p in query_params])
 
-            for op, od in other_params.items():
-                b1 = np.array(param[2])
-                b2 = np.array(op[2])
+        _iter = tqdm(self.A.items())
+        for i, (param, data) in enumerate(_iter):
 
-                param_a = list(param)
-                op_a = list(op)
+            if i in _ignore:
+                continue
 
-                sep_angle = np.arccos(np.dot(b1, b2))
-                dx = np.abs(op_a[0] - param_a[0])
-                dy = np.abs(op_a[1] - param_a[1])
+            _ignore.add(i)
 
-                if (sep_angle < b_tolerance) and (dx < xy_tolerance) and (dy < xy_tolerance):
-                    _ignore.append(op)
-                    A[param].update(od)
+            close_xy_indices = set(xy_kdtree.query_radius([param[0:2]], r=self.xytol)[0].tolist())
+            close_b_indices = set(b_kdtree.query_radius([param[2]], r=_dist_from_rad(self.btol))[0].tolist())
+
+            indices = close_xy_indices.intersection(close_b_indices)
+            indices.discard(_ignore)
+
+            if indices:
+                A[param] = data
+
+                _ignore.update(indices)
+                close = [list(query_params)[j] for j in indices]
+
+                for key in close:
+                    A[param].update(query_params[key])
 
         self.A = A
 
     def get_accumulator_max(self):
 
-        params, points = list(self.A.items())[-1]
+        try:
+            params, points = list(self.A.items())[-1]
+        except IndexError:
+            return None
 
         try:
             del self.A[params]
@@ -139,12 +156,15 @@ class Hough:
         self.A = {}
 
         run_points = []
-        # _iter = tqdm(points)
-        for i, p in enumerate(points):
+        _iter = tqdm(points)
+        for i, p in enumerate(_iter):
             run_points.append(i)
             other_points = {k: a for k, a in enumerate(points) if k not in run_points}
 
             for j, (opi, op) in enumerate(other_points.items()):
+
+                if np.isclose(op[2], p[2]):
+                    continue
 
                 b = tuple(self.get_b(p, op))
                 xp = self.x_prime(p, b)
@@ -156,13 +176,9 @@ class Hough:
                 except KeyError:
                     self.A[_params] = {i, opi}
 
-            #_iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
+            _iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
 
         self.bin_accumulator()
-
-        with open("A.json", "w") as f:
-            A_stringify = {str(k): list(v) for k, v in self.A.items()}
-            json.dump(A_stringify, f)
 
     @staticmethod
     def point_from_prime(xp, yp, b):
