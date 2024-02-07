@@ -1,4 +1,4 @@
-from reconstruct import Hough
+from reconstruct import Transform
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -37,7 +37,7 @@ def run_hough(btol, xytol, line_count):
     points = np.array(points)
     points += np.random.normal(size=points.shape) * [0.01, 0.01, 0]
 
-    hough = Hough(points, 5, line_count, btol, xytol, 0 * np.pi / 180, plot=True)
+    hough = Transform(points, 5, line_count + 5, btol, xytol, 0 * np.pi / 180, plot=True)
 
     lines = hough.find_lines()
 
@@ -67,9 +67,7 @@ def accuracy_check():
 
 def main():
 
-    run_hough(line_count=30, xytol=0.6, btol=1 * np.pi / 180)
-
-    #  best params btol=4 degrees, xytol=0.4 (with 3 lines)
+    run_hough(line_count=50, xytol=0.1, btol=0.5 * np.pi / 180)
 
 
 if __name__ == "__main__":

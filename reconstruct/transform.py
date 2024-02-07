@@ -3,13 +3,10 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import KDTree
 from tqdm import tqdm
 import sys
-import json
 import time
 
-from .geometry import Icosahedron
 
-
-class Hough:
+class Transform:
 
     def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, min_angle, plot=False):
 
@@ -69,7 +66,7 @@ class Hough:
         self.sort_accumulator()
         lines, used_points = self.run_detection()
 
-        print("--- Complete in {:.4f} seconds ---".format(time.time() - time_now))
+        print("\n--- Complete in {:.4f} seconds ---\n".format(time.time() - time_now))
 
         if self.plot is True:
             self.plot_accumulator(lines)
@@ -110,6 +107,7 @@ class Hough:
         b_kdtree = KDTree([list(p[2]) for p in query_params])
 
         _iter = tqdm(self.A.items())
+        _iter.set_description("Binning".ljust(35))
         for i, (param, data) in enumerate(_iter):
 
             if i in _ignore:
@@ -167,8 +165,11 @@ class Hough:
                     continue
 
                 b = tuple(self.get_b(p, op))
-                xp = self.x_prime(p, b)
-                yp = self.y_prime(p, b)
+                xp = self.get_xprime(p, b)
+                yp = self.get_yprime(p, b)
+
+                if b[2] <= 0.01:
+                    continue
 
                 _params = (xp, yp, b)
                 try:
@@ -176,9 +177,19 @@ class Hough:
                 except KeyError:
                     self.A[_params] = {i, opi}
 
-            _iter.set_description("Incrementing Accumulator ({:.1f} MB)".format(sys.getsizeof(self.A) / 1e6))
+            _iter.set_description("Incrementing Accumulator ({:.1f} KB)".format(sys.getsizeof(self.A) / 1e3))
 
         self.bin_accumulator()
+
+    def svd_optimise(self, indices):
+
+        points = self.points[indices]
+        mean = points.mean(axis=0)
+        _, _, vv = np.linalg.svd(points - mean, full_matrices=False)
+
+        rmse = self.get_rmse(points, mean, vv[0])
+
+        return [np.around(mean, 4), np.around(vv[0], 4), np.around(rmse, 4), np.int64(len(points))]
 
     @staticmethod
     def point_from_prime(xp, yp, b):
@@ -215,34 +226,8 @@ class Hough:
 
         return [-half_mag * 2, half_mag * 2]  # add buffer
 
-    def x_prime(self, p, b):
-
-        xp = (1 - b[0] ** 2 / (1 + b[2])) * p[0] - b[0] * b[1] / (1 + b[2]) * p[1] - b[0] * p[2]
-        return xp
-
-    def y_prime(self, p, b):
-
-        yp = - b[0] * b[1] / (1 + b[2]) * p[0] + (1 - (b[1] ** 2 / (1 + b[2]))) * p[1] - (b[1] * p[2])
-        return yp
-
-    def get_b(self, p1, p2):
-
-        b = p2 - p1 if (p2[2] > p1[2]) else p1 - p2
-        b_norm = b / np.linalg.norm(b)
-
-        return b_norm
-
-    def svd_optimise(self, indices):
-
-        points = self.points[indices]
-        mean = points.mean(axis=0)
-        _, _, vv = np.linalg.svd(points - mean, full_matrices=False)
-
-        rmse = self.get_rmse(points, mean, vv[0])
-
-        return [np.around(mean, 4), np.around(vv[0], 4), np.around(rmse, 4), np.int64(len(points))]
-
-    def get_rmse(self, points, mean, direction):
+    @staticmethod
+    def get_rmse(points, mean, direction):
 
         errors = 0
         for p in points:
@@ -267,3 +252,23 @@ class Hough:
         n = len(points)
         rmse = np.sqrt(errors / n if n != 0 else 1)
         return rmse
+
+    @staticmethod
+    def get_xprime(p, b):
+
+        xp = (1 - b[0] ** 2 / (1 + b[2])) * p[0] - b[0] * b[1] / (1 + b[2]) * p[1] - b[0] * p[2]
+        return xp
+
+    @staticmethod
+    def get_yprime(p, b):
+
+        yp = - b[0] * b[1] / (1 + b[2]) * p[0] + (1 - (b[1] ** 2 / (1 + b[2]))) * p[1] - (b[1] * p[2])
+        return yp
+
+    @staticmethod
+    def get_b(p1, p2):
+
+        b = p2 - p1 if (p2[2] > p1[2]) else p1 - p2
+        b_norm = b / np.linalg.norm(b)
+
+        return b_norm

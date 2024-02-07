@@ -1,2 +1,2 @@
-from .hough import Hough
+from .transform import Transform
 
