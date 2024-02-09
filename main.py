@@ -37,7 +37,7 @@ def run_hough(btol, xytol, line_count):
     points = np.array(points)
     points += np.random.normal(size=points.shape) * [0.01, 0.01, 0]
 
-    hough = Transform(points, 5, line_count + 5, btol, xytol, 0 * np.pi / 180, plot=True)
+    hough = Transform(points, 5, line_count + 5, btol, xytol, 0 * np.pi / 180, 0.1, plot=True)
 
     lines = hough.find_lines()
 

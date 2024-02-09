@@ -7,27 +7,59 @@ import time
 
 
 class Transform:
+    """Houses the line detection algorithm."""
 
-    def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, min_angle, plot=False):
+    def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, min_angle, max_rmse, plot=False) -> None:
+
+        """Initialize an instance of the Transform class.
+
+        :param points: 3D input points to transform.
+        :type points: np.ndarray
+
+        :param n_abs: The minimum number of points that constitute a path detection.
+        :type n_abs: int
+
+        :param k_max: The maximum number of lines to detect.
+        :type k_max: int
+
+        :param btol: The maximum angle difference at which two line segments can be combined in the binner.
+        :type btol: int | float
+
+        :param xytol: The maximum position difference (with respect to the computed `x'` and `y'` coordinates) at which two line segments can be combined in the binner.
+        :type xytol: int | float
+
+        :param min_angle: The minimum angle above the `xy` plane of the direction vector `b` that defines a line. Any `b` with an angle above the `xy` plane greater than ``min_angle`` will have their associated line discarded.
+        :type min_angle: int | float
+
+        :param max_rmse: The maximum RMSE value at which a path detection is valid.
+        :type max_rmse: int | float
+
+        :param plot: Plots the resulting lines if ``True``, default is ``False``.
+        :type plot: bool
+        """
 
         self.points = points
+
+        # plot point spacing
+        self.dl = 1
+
+        # find total range of x' and y' values
         self.prime_range = self.get_prime_range(self.points)
 
         self.n_abs = n_abs
         self.k_max = k_max
-        self.dl = 1
-        self.max_rmse = 0.1
-
         self.btol = btol
         self.xytol = xytol
         self.min_angle = min_angle
-
+        self.max_rmse = max_rmse
         self.plot = plot
 
         # initialize sparse accumulator
         self.A = {}
 
-    def run_detection(self):
+    def run_detection(self) -> tuple[list[list[Any]], list[Any]]:
+
+        """Translates the accumulator into a list of best fit lines."""
 
         lines = []
         used_points = []
@@ -35,34 +67,45 @@ class Transform:
         while True:
 
             try:
+                # get the maximum voted line in the accumulator
                 points = list(self.get_accumulator_max())
             except TypeError:
+                # break if the accumulator has been drained
                 break
 
             if self.n_abs and len(points) < self.n_abs:
+                # break if the number of points is not sufficient to constitute a detection
                 break
 
+            # get line params using SVD
             line_params = self.svd_optimise(points)
 
+            # check if the line is a duplicate
             _exists = False
             for k in lines:
                 if np.all([np.allclose(v, line_params[i]) for i, v in enumerate(k)]):
                     _exists = True
 
+            # append line to database if it is not a duplicate and has low enough RMSE
             if (line_params[2] < self.max_rmse) and not _exists:
                 lines.append(line_params)
 
+                # record used points
                 for p in points:
                     used_points.append(p)
 
         return lines, used_points
 
-    def find_lines(self):
+    def find_lines(self) -> list:
+
+        """Run the line-finding algorithm on stored data."""
 
         time_now = time.time()
 
-        self.increment_accumulator()
+        # run the populator
+        self.populate_accumulator()
 
+        # run the sorter
         self.sort_accumulator()
         lines, used_points = self.run_detection()
 
@@ -70,9 +113,17 @@ class Transform:
 
         if self.plot is True:
             self.plot_accumulator(lines)
+
         return lines
 
     def plot_accumulator(self, lines):
+
+        """
+        Simple plotter to display detected lines alongside the input point cloud.
+
+        :param lines: Lines to plot (detected lines) with point cloud.
+        :type lines: list | tuple | np.ndarray
+        """
 
         fig = plt.figure(figsize=(8, 8))
         ax = fig.add_subplot(projection="3d")
@@ -81,26 +132,34 @@ class Transform:
 
         v = np.arange(*self.prime_range, self.dl)
 
+        # plot each input line
         for [point, b, _, _] in lines:
             ax.plot(point[0] + v * b[0], point[1] + v * b[1], point[2] + v * b[2])
 
+        # plot the stored point cloud
         ax.scatter(self.points[:, 0], self.points[:, 1], self.points[:, 2])
 
         plt.show()
 
     def sort_accumulator(self):
 
+        """Sort the accumulator in ascending order based on the vote count."""
+
         sorted_A = dict(sorted(self.A.items(), key=lambda x: len(x[1])))
         self.A = sorted_A
 
-    def bin_accumulator(self):
+    def bin_accumulator(self) -> None:
+
+        """Bin the accumulator. Converts the list of line segments generated by the populator into a set of line candidates by generating composite lines from segments with similar parameters."""
 
         def _dist_from_rad(rad):
+            """Convert radians to the radius of a circle the angle would draw out."""
             return np.sqrt(2 * (1 - np.cos(rad)))
 
         A = {}
         _ignore = set()
 
+        # define a KD tree for both b and xy for fast distance queries
         query_params = {op: od for op, od in self.A.items()}
 
         xy_kdtree = KDTree([[p[0], p[1]] for p in query_params])
@@ -108,19 +167,27 @@ class Transform:
 
         _iter = tqdm(self.A.items())
         _iter.set_description("Binning".ljust(35))
+
+        # iterate over each entry in the accumulator
         for i, (param, data) in enumerate(_iter):
 
             if i in _ignore:
+                # ignore any previously used line segments
                 continue
 
             _ignore.add(i)
 
+            # find all other line segments that lie within the position and angle tolerances
             close_xy_indices = set(xy_kdtree.query_radius([param[0:2]], r=self.xytol)[0].tolist())
             close_b_indices = set(b_kdtree.query_radius([param[2]], r=_dist_from_rad(self.btol))[0].tolist())
 
+            # isolate line segments that are within both xy and b tolerance
             indices = close_xy_indices.intersection(close_b_indices)
+
+            # ignore any previously used line segments
             indices.discard(_ignore)
 
+            # generate composite lines
             if indices:
                 A[param] = data
 
@@ -130,15 +197,21 @@ class Transform:
                 for key in close:
                     A[param].update(query_params[key])
 
+        # replace the accumulator with the binned version
         self.A = A
 
-    def get_accumulator_max(self):
+    def get_accumulator_max(self) -> tuple | None:
+
+        """Get the maximum value of the accumulator. Must run ``sort_accumulator`` once for this function to work."""
 
         try:
+            # get last value of accumulator (assumes sorted)
             params, points = list(self.A.items())[-1]
         except IndexError:
+            # the accumulator is empty
             return None
 
+        # delete the entry in the accumulator
         try:
             del self.A[params]
         except KeyError:
@@ -146,53 +219,90 @@ class Transform:
 
         return points
 
-    def increment_accumulator(self, points=None):
+    def populate_accumulator(self, points=None):
+
+        """
+        Increment the voting array using an input 3D point cloud.
+
+        :param points: The input point cloud to use when populating the accumulator. Defaults to ``self.points``.
+        :type points: np.ndarray
+        """
 
         if points is None:
             points = self.points
 
+        # reset the accumulator
         self.A = {}
 
         run_points = []
         _iter = tqdm(points)
+
+        # iterate over each point
         for i, p in enumerate(_iter):
             run_points.append(i)
             other_points = {k: a for k, a in enumerate(points) if k not in run_points}
 
+            # iterate over every other point (ignoring previously run points)
             for j, (opi, op) in enumerate(other_points.items()):
 
                 if np.isclose(op[2], p[2]):
+                    # ignore if the points are the same
                     continue
 
+                # generate line segment between points p and op and convert to the primed coordinate frame
                 b = tuple(self.get_b(p, op))
                 xp = self.get_xprime(p, b)
                 yp = self.get_yprime(p, b)
 
-                if b[2] <= 0.01:
-                    continue
-
+                # append parameters to the accumulator
                 _params = (xp, yp, b)
                 try:
                     self.A[_params].add(i)
                 except KeyError:
                     self.A[_params] = {i, opi}
 
+            # display the current memory usage
             _iter.set_description("Incrementing Accumulator ({:.1f} KB)".format(sys.getsizeof(self.A) / 1e3))
 
+        # run the binner
         self.bin_accumulator()
 
-    def svd_optimise(self, indices):
+    def svd_optimise(self, indices) -> list[Any, Any, Any, np.int64]:
 
+        """
+        Compute an optimized best fit line using SVD from a given set of points.
+
+        :params indices: The indices of the points in the local point list.
+        :type indices: list[int]
+        """
+
+        # convert indices to points
         points = self.points[indices]
+
+        # calculate the mean and run SVD
         mean = points.mean(axis=0)
         _, _, vv = np.linalg.svd(points - mean, full_matrices=False)
 
+        # get the RMSE for the calculated line
         rmse = self.get_rmse(points, mean, vv[0])
 
         return [np.around(mean, 4), np.around(vv[0], 4), np.around(rmse, 4), np.int64(len(points))]
 
     @staticmethod
-    def point_from_prime(xp, yp, b):
+    def point_from_prime(xp, yp, b) -> np.ndarray:
+
+        """
+        Compute the [`x`, `y`, `z`] coordinate from the primed coordinates [`x'`, `y'`] and direction vector `b`.
+
+        :param xp: The input `x'` point.
+        :type xp: int | float
+
+        :param yp: The input `y'` point.
+        :type yp: int | float
+
+        :param b: The input direction vector in 3D.
+        :type b: list | tuple | np.ndarray
+        """
 
         x_coeff = np.array([
             1 - (b[0] ** 2) / (1 + b[2]),
@@ -212,6 +322,13 @@ class Transform:
     @staticmethod
     def get_prime_range(points):
 
+        """
+        Calculate the domain for the prime coordinates.
+
+         :param points: The input points in 3D.
+        :type points: np.ndarray
+        """
+
         xs = points[:, 0]
         ys = points[:, 1]
         zs = points[:, 2]
@@ -224,37 +341,51 @@ class Transform:
 
         half_mag = np.linalg.norm(d / 2)
 
-        return [-half_mag * 2, half_mag * 2]  # add buffer
+        return [-half_mag * 2, half_mag * 2]
 
     @staticmethod
-    def get_rmse(points, mean, direction):
+    def get_rmse(points, mean, b):
 
-        errors = 0
+        """
+        Compute the root mean standard error (RMSE) value given a line and the set of points on the line that led to its detection.
+
+        :param points: The input points in 3D.
+        :type points: np.ndarray
+
+        :param mean: The mean [`x`, `y`, `z`] value of the line.
+        :type mean: np.ndarray
+
+        :param b: The input direction vector in 3D.
+        :type b: list | tuple | np.ndarray
+        """
+
+        errors = 0  # running sum of error
         for p in points:
-            expect_z = p[2]
-            expect_y = p[1]
-            expect_x = p[0]
 
-            if direction[2] != 0:
-                calc_point = mean + (expect_z / direction[2]) * direction
-            elif direction[1] != 0:
-                calc_point = mean + (expect_y / direction[1]) * direction
-            elif direction[0] != 0:
-                calc_point = mean + (expect_x / direction[0]) * direction
-            else:
-                raise ValueError("Line has invalid direction vector b = (0, 0, 0).")
+            distance = np.abs(np.linalg.norm(np.cross(p - mean, b)))
 
-            dx = calc_point[0] - p[0]
-            dy = calc_point[1] - p[1]
-
-            errors += dx ** 2 + dy ** 2
+            errors += distance ** 2
 
         n = len(points)
-        rmse = np.sqrt(errors / n if n != 0 else 1)
+        rmse = np.sqrt(errors / n if n != 0 else 1)  # normalize rmse
         return rmse
 
     @staticmethod
     def get_xprime(p, b):
+
+        """
+        Compute the `x'` value for a given point ``p`` and direction ``b`` pair. The value `x'` is calculated using the function:
+
+        .. math::
+
+            x'=\left(1-\frac{b^2_x}{1+b_z}\right)p_x-\left(\frac{b_xb_y}{1+b_z}\right)p_y-b_xp_z
+
+        :param p: The input point in 3D.
+        :type p: list | tuple | np.ndarray
+
+        :param b: The input direction vector in 3D.
+        :type b: list | tuple | np.ndarray
+        """
 
         xp = (1 - b[0] ** 2 / (1 + b[2])) * p[0] - b[0] * b[1] / (1 + b[2]) * p[1] - b[0] * p[2]
         return xp
@@ -262,11 +393,35 @@ class Transform:
     @staticmethod
     def get_yprime(p, b):
 
+        """
+        Compute the `y'` value for a given point ``p`` and direction ``b`` pair. The value `y'` is calculated using the function:
+
+        .. math::
+
+            y'=-\left(\frac{b_xb_y}{1+b_z}\right)p_x+\left(1-\frac{b^2_y}{1+b_z}\right)p_y-b_yp_z
+
+        :param p: The input point in 3D.
+        :type p: list | tuple | np.ndarray
+
+        :param b: The input direction vector in 3D.
+        :type b: list | tuple | np.ndarray
+        """
+
         yp = - b[0] * b[1] / (1 + b[2]) * p[0] + (1 - (b[1] ** 2 / (1 + b[2]))) * p[1] - (b[1] * p[2])
         return yp
 
     @staticmethod
-    def get_b(p1, p2):
+    def get_b(p1, p2) -> np.ndarray:
+
+        """
+        Get the direction vector between two points ``p1`` and ``p2`` (pointing in positive `z` direction).
+
+        :param p1: Input point 1 in 3D.
+        :type p1: list | tuple | np.ndarray
+
+        :param p2: Input point 2 in 3D.
+        :type p2: list | tuple | np.ndarray
+        """
 
         b = p2 - p1 if (p2[2] > p1[2]) else p1 - p2
         b_norm = b / np.linalg.norm(b)
