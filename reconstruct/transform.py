@@ -57,7 +57,7 @@ class Transform:
         # initialize sparse accumulator
         self.A = {}
 
-    def run_detection(self) -> tuple[list[list[Any]], list[Any]]:
+    def run_detection(self) -> tuple[list[list], list]:
 
         """Translates the accumulator into a list of best fit lines."""
 
@@ -254,6 +254,9 @@ class Transform:
                 xp = self.get_xprime(p, b)
                 yp = self.get_yprime(p, b)
 
+                if b[2] <= 0.01:
+                    continue
+
                 # append parameters to the accumulator
                 _params = (xp, yp, b)
                 try:
@@ -267,7 +270,7 @@ class Transform:
         # run the binner
         self.bin_accumulator()
 
-    def svd_optimise(self, indices) -> list[Any, Any, Any, np.int64]:
+    def svd_optimise(self, indices) -> list:
 
         """
         Compute an optimized best fit line using SVD from a given set of points.
