@@ -1,5 +1,6 @@
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objs as go
+from plotly.graph_objects import Layout
 from sklearn.neighbors import KDTree
 from tqdm import tqdm
 import sys
@@ -87,6 +88,7 @@ class Transform:
 
             # append line to database if it is not a duplicate and has low enough RMSE
             if (line_params[2] < self.max_rmse) and not _exists:
+                print(line_params[2])
                 lines.append(line_params)
 
                 # record used points
@@ -124,21 +126,40 @@ class Transform:
         :type lines: list | tuple | np.ndarray
         """
 
-        fig = plt.figure(figsize=(8, 8))
-        ax = fig.add_subplot(projection="3d")
-
-        ax.set_zlim(-3, 3)
-
         v = np.arange(*self.prime_range, self.dl)
 
-        # plot each input line
+        layout = Layout(
+            paper_bgcolor='rgba(0,0,0,1)',
+            plot_bgcolor='rgba(0,0,0,1)'
+        )
+
+        fig = go.Figure(layout=layout)
         for [point, b, _, _] in lines:
-            ax.plot(point[0] + v * b[0], point[1] + v * b[1], point[2] + v * b[2])
+            fig.add_trace(
+                go.Scatter3d(
+                    x=point[0] + v * b[0],
+                    y=point[1] + v * b[1],
+                    z=point[2] + v * b[2],
+                    mode="lines",
+                    line={
+                        "width": 3
+                    }
+                )
+            )
 
-        # plot the stored point cloud
-        ax.scatter(self.points[:, 0], self.points[:, 1], self.points[:, 2])
+        fig.add_trace(
+            go.Scatter3d(
+                x=self.points[:, 0],
+                y=self.points[:, 1],
+                z=self.points[:, 2],
+                mode="markers",
+                marker={
+                    "size": 2
+                }
+            )
+        )
 
-        plt.show()
+        fig.show()
 
     def _sort_accumulator(self):
 
@@ -184,7 +205,7 @@ class Transform:
             indices = close_xy_indices.intersection(close_b_indices)
 
             # ignore any previously used line segments
-            indices.discard(_ignore)
+            indices.difference_update(_ignore)
 
             # generate composite lines
             if indices:
@@ -236,6 +257,9 @@ class Transform:
         run_points = []
         _iter = tqdm(points)
 
+        c = 299792458  # m/s
+        max_time_delta = np.sqrt((100 / c) ** 2 + (0.8 / c) ** 2) * 1e9 / 2  # nanoseconds
+
         # iterate over each point
         for i, p in enumerate(_iter):
             run_points.append(i)
@@ -248,10 +272,14 @@ class Transform:
                     # ignore if the points are the same
                     continue
 
+                if np.abs(op[3] - p[3]) > max_time_delta:
+                    # ignore if time difference is too great
+                    continue
+
                 # generate line segment between points p and op and convert to the primed coordinate frame
-                b = tuple(self._get_b(p, op))
-                xp = self._get_xprime(p, b)
-                yp = self._get_yprime(p, b)
+                b = tuple(self._get_b(p[0:3], op[0:3]))
+                xp = self._get_xprime(p[0:3], b[0:3])
+                yp = self._get_yprime(p[0:3], b[0:3])
 
                 if b[2] <= 0.01:
                     continue
@@ -343,7 +371,7 @@ class Transform:
 
         half_mag = np.linalg.norm(d / 2)
 
-        return [-half_mag * 2, half_mag * 2]
+        return [-half_mag * 2.2, half_mag * 2.2]
 
     @staticmethod
     def _get_rmse(points, mean, b):
@@ -364,7 +392,9 @@ class Transform:
         errors = 0  # running sum of error
         for p in points:
 
-            distance = np.abs(np.linalg.norm(np.cross(p - mean, b)))
+            # ignore time diff for RMSE calculation
+            # consider implementing Gram-Schmidt Orthogonalization to include timings
+            distance = np.abs(np.linalg.norm(np.cross(p[0:3] - mean[0:3], b[0:3])))
 
             errors += distance ** 2
 
