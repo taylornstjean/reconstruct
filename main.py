@@ -50,7 +50,7 @@ def run_points(line_count, btol, xytol):
 
 def main():
 
-    run_hough(line_count=50, xytol=0.3, btol=0.5 * np.pi / 180)
+    run_points(line_count=50, xytol=0.4, btol=0.5 * np.pi / 180)
 
 
 if __name__ == "__main__":

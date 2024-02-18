@@ -88,7 +88,6 @@ class Transform:
 
             # append line to database if it is not a duplicate and has low enough RMSE
             if (line_params[2] < self.max_rmse) and not _exists:
-                print(line_params[2])
                 lines.append(line_params)
 
                 # record used points
@@ -130,7 +129,10 @@ class Transform:
 
         layout = Layout(
             paper_bgcolor='rgba(0,0,0,1)',
-            plot_bgcolor='rgba(0,0,0,1)'
+            plot_bgcolor='rgba(0,0,0,1)',
+            font_color="white",
+            title_font_color="white",
+            legend_title_font_color="white"
         )
 
         fig = go.Figure(layout=layout)
@@ -142,7 +144,8 @@ class Transform:
                     z=point[2] + v * b[2],
                     mode="lines",
                     line={
-                        "width": 3
+                        "width": 2,
+                        "colorscale": "plasma"
                     }
                 )
             )
@@ -154,7 +157,16 @@ class Transform:
                 z=self.points[:, 2],
                 mode="markers",
                 marker={
-                    "size": 2
+                    "size": 3,
+                    "color": "black"
+                }
+            )
+        )
+
+        fig.update_layout(
+            scene=dict(
+                zaxis={
+                    "range": [-3, 3]
                 }
             )
         )
@@ -175,6 +187,14 @@ class Transform:
         def _dist_from_rad(rad):
             """Convert radians to the radius of a circle the angle would draw out."""
             return np.sqrt(2 * (1 - np.cos(rad)))
+
+        def _contains_duplicates(array):
+            """Check for duplicates in an array."""
+            seen = set()
+            for x in array:
+                if x in seen or seen.add(x):
+                    return True
+            return False
 
         A = {}
         _ignore = set()
@@ -209,15 +229,25 @@ class Transform:
 
             # generate composite lines
             if indices:
-                A[param] = data
 
-                _ignore.update(indices)
+                # convert indices to line params
                 close = [list(query_params)[j] for j in indices]
+
+                # check if line has multiple detection points on one layer (not allowed)
+                p_indices = list(set().union(*[query_params[key] for key in close]))
+                line_zs = [np.around(self.points[k][2], 2) for k in p_indices]
+
+                if _contains_duplicates(line_zs):
+                    continue
+
+                # update new binned accumulator
+                A[param] = data
+                _ignore.update(indices)
 
                 for key in close:
                     A[param].update(query_params[key])
 
-        # replace the accumulator with the binned version
+        # replace the original accumulator with the new binned version
         self.A = A
 
     def _get_accumulator_max(self) -> tuple | None:
