@@ -10,7 +10,7 @@ import time
 class Transform:
     """Houses the line detector. Initialize with a 3D point cloud and run ``find_lines`` method to execute the algorithm."""
 
-    def __init__(self, points: np.ndarray, n_abs, k_max, btol, xytol, min_angle, max_rmse, plot=False) -> None:
+    def __init__(self, points: np.ndarray, n_abs, k_max, plate_spacing, pos_resolution, min_angle, max_rmse, plot=False) -> None:
 
         """
         :param points: 3D input points to transform.
@@ -22,11 +22,11 @@ class Transform:
         :param k_max: The maximum number of lines to detect.
         :type k_max: int
 
-        :param btol: The maximum angle difference at which two line segments can be combined in the binner.
-        :type btol: int | float
+        :param plate_spacing: The vertical spacing in meters between each tracker in the main detector.
+        :type plate_spacing: int | float
 
-        :param xytol: The maximum position difference (with respect to the computed `x'` and `y'` coordinates) at which two line segments can be combined in the binner.
-        :type xytol: int | float
+        :param pos_resolution: The positional resolution in meters of the trackers in the detector.
+        :type pos_resolution: int | float
 
         :param min_angle: The minimum angle above the `xy` plane of the direction vector `b` that defines a line. Any `b` with an angle above the `xy` plane greater than ``min_angle`` will have their associated line discarded.
         :type min_angle: int | float
@@ -46,16 +46,35 @@ class Transform:
         # find total range of x' and y' values
         self.prime_range = self._get_prime_range(self.points)
 
+        self.plate_spacing = plate_spacing
+        self.pos_resolution = pos_resolution
         self.n_abs = n_abs
         self.k_max = k_max
-        self.btol = btol
-        self.xytol = xytol
+        self.btol = self._get_btol()
+        self.xytol = self._get_xytol()
         self.min_angle = min_angle
         self.max_rmse = max_rmse
         self.plot = plot
 
         # initialize sparse accumulator
         self.A = {}
+
+    def _get_btol(self):
+
+        """Calculate the b-tolerance value based on the geometry of the detector."""
+
+        max_d = np.sqrt(2 * self.pos_resolution ** 2)
+        btol = np.arctan(max_d / self.plate_spacing) / 4  # add buffer zone
+
+        return btol
+
+    def _get_xytol(self):
+
+        """Calculate the xy-tolerance value based on the geometry of the detector."""
+
+        xytol = self.pos_resolution * 30  # add buffer zone
+
+        return xytol
 
     def _run_detection(self) -> tuple[list[list], list]:
 
@@ -170,6 +189,8 @@ class Transform:
                 }
             )
         )
+
+        fig.write_html("transform.html")
 
         fig.show()
 

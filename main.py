@@ -1,56 +1,27 @@
 from reconstruct import Transform
+from testing import random_lines
 import numpy as np
 
 
-#  -------------------  MAIN DRIVER FOR TESTING  -------------------  #
+#  -------------------  MAIN DRIVER  -------------------  #
 
 
-def run_hough(btol, xytol, line_count):
-    v = np.arange(-2, 3, 1) * 0.8
+def test_transform(plate_spacing, pos_resolution, line_count, rerun=False):
 
-    point = [np.array([
-        np.random.randint(-1000, 1000),
-        np.random.randint(-1000, 1000),
-        0,
-        np.random.randint(0, 10000)
-    ]) / 10 for _ in range(line_count)]
+    if not rerun:
+        # generate new points
+        points = random_lines(line_count, plate_spacing, pos_resolution)
+    else:
+        # load last run points
+        points = np.loadtxt("points.txt")
 
-    direction = [np.array([
-        np.random.randint(-1000, 1000),
-        np.random.randint(-1000, 1000),
-        100,
-        267
-    ]) / 100 for _ in range(line_count)]
-
-    direction += np.array([14, 0, 0, 0])
-
-    points = []
-    for i, p in enumerate(point):
-        line = [p + direction[i] * n for n in v]
-        for a in line:
-            points.append(a)
-
-    points = np.array(points)
-    points += np.random.normal(size=points.shape) * [0.01, 0.01, 0, 0]
-
-    np.savetxt("points.txt", points)
-
-    hough = Transform(points, 5, line_count + 5, btol, xytol, 0.1 * np.pi / 180, 0.02, plot=True)
-
-    hough.find_lines()
-
-
-def run_points(line_count, btol, xytol):
-
-    points = np.loadtxt("points.txt")
-    hough = Transform(points, 5, line_count + 5, btol, xytol, 0.1 * np.pi / 180, 0.02, plot=True)
-
+    hough = Transform(points, 5, line_count + 5, plate_spacing, pos_resolution, 0.1 * np.pi / 180, 0.02, plot=True)
     hough.find_lines()
 
 
 def main():
 
-    run_points(line_count=50, xytol=0.4, btol=0.5 * np.pi / 180)
+    test_transform(line_count=100, pos_resolution=0.01, plate_spacing=0.8)
 
 
 if __name__ == "__main__":
