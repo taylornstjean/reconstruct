@@ -209,13 +209,13 @@ class Transform:
             """Convert radians to the radius of a circle the angle would draw out."""
             return np.sqrt(2 * (1 - np.cos(rad)))
 
-        def _contains_duplicates(array):
-            """Check for duplicates in an array."""
-            seen = set()
-            for x in array:
-                if x in seen or seen.add(x):
-                    return True
-            return False
+        def _span_all_layers(array):
+            """Check if there is at least one detected point on every layer for a line."""
+            expected = set(np.arange(-2, 3, 1) * self.plate_spacing)
+            seen = set(array)
+            if seen.union(expected) != expected:
+                return False
+            return True
 
         A = {}
         _ignore = set()
@@ -254,11 +254,11 @@ class Transform:
                 # convert indices to line params
                 close = [list(query_params)[j] for j in indices]
 
-                # check if line has multiple detection points on one layer (not allowed)
+                # check if line has at least one detection point on each layer
                 p_indices = list(set().union(*[query_params[key] for key in close]))
                 line_zs = [np.around(self.points[k][2], 2) for k in p_indices]
 
-                if _contains_duplicates(line_zs):
+                if not _span_all_layers(line_zs):
                     continue
 
                 # update new binned accumulator

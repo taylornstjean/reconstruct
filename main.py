@@ -21,7 +21,7 @@ def test_transform(plate_spacing, pos_resolution, line_count, rerun=False):
 
 def main():
 
-    test_transform(line_count=100, pos_resolution=0.01, plate_spacing=0.8)
+    test_transform(line_count=100, pos_resolution=0.01, plate_spacing=0.8, rerun=True)
 
 
 if __name__ == "__main__":
