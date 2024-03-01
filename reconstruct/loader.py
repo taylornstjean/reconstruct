@@ -50,7 +50,6 @@ class SimData:
 
         frames: list[pd.DataFrame] = [pd.DataFrame(stack) for stack in data]
         df: pd.DataFrame = pd.concat(frames)
-        df.reset_index()
         array: np.ndarray = df.to_numpy()
 
         return array
