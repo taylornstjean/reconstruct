@@ -3,7 +3,7 @@ from sklearn.neighbors import KDTree
 from tqdm import tqdm
 import sys
 import time
-from .renderer import plot_transform
+from .renderer import Plot3D
 
 
 class Transform:
@@ -84,6 +84,10 @@ class Transform:
 
         while True:
 
+            if len(lines) >= self.k_max:
+                # break if the number of desired lines have been found
+                break
+
             try:
                 # get the maximum voted line in the accumulator
                 points = list(self._get_accumulator_max())
@@ -95,6 +99,8 @@ class Transform:
                 # break if the number of points is not sufficient to constitute a detection
                 break
 
+            print(points)
+
             # get line params using SVD
             line_params = self._svd_optimise(points)
 
@@ -105,6 +111,7 @@ class Transform:
                     _exists = True
 
             # append line to database if it is not a duplicate and has low enough RMSE
+            print(line_params[2])
             if (line_params[2] < self.max_rmse) and not _exists:
                 lines.append(line_params)
 
@@ -130,7 +137,11 @@ class Transform:
         print("\n--- Complete in {:.4f} seconds ---\n".format(time.time() - time_now))
 
         if self.plot is True:
-            plot_transform(lines, self.points, self.prime_range, self.dl)
+            plotter = Plot3D()
+            plotter.lines([line[0:2] for line in lines], self.prime_range, self.dl)
+            plotter.points(self.points)
+            plotter.save("plot_transform.html")
+            plotter.show()
 
         return lines
 
@@ -196,10 +207,10 @@ class Transform:
 
                 # check if line has at least one detection point on each layer
                 p_indices = list(set().union(*[query_params[key] for key in close]))
-                line_zs = [np.around(self.points[k][2], 2) for k in p_indices]
+                # line_zs = [np.around(self.points[k][2], 2) for k in p_indices]
 
-                if not _span_all_layers(line_zs):
-                    continue
+                # if not _span_all_layers(line_zs):
+                #     continue
 
                 # update new binned accumulator
                 A[param] = data
@@ -249,7 +260,7 @@ class Transform:
         _iter = tqdm(points)
 
         c = 299792458  # m/s
-        max_time_delta = np.sqrt((100 / c) ** 2 + (0.8 / c) ** 2) * 1e9 / 2  # nanoseconds
+        max_time_delta = np.sqrt((100 / c) ** 2 + (0.8 / c) ** 2) * 1e9 / 2 * 1000  # nanoseconds
 
         # iterate over each point
         for i, p in enumerate(_iter):

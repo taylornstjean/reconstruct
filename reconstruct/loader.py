@@ -2,6 +2,7 @@ import uproot as u
 from uproot.models.TTree import Model_TTree_v20
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 
 class SimData:
@@ -53,4 +54,27 @@ class SimData:
         df: pd.DataFrame = pd.concat(frames)
         array: np.ndarray = df.to_numpy()
 
-        return array
+        points: list = array.tolist()
+        _ignore: list = []
+        _to_delete: list = []
+
+        _iter = tqdm(array)
+
+        for i, point in enumerate(_iter):
+            _ignore.append(i)
+
+            for j, com_point in enumerate(array):
+                if j in _ignore:
+                    continue
+
+                if np.allclose(point, com_point, atol=10):
+                    _ignore.append(j)
+                    _to_delete.append(j)
+
+        for i in sorted(_to_delete, reverse=True):
+            points.pop(i)
+
+        print(points)
+        print(_to_delete)
+
+        return np.array(points)
