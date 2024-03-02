@@ -44,7 +44,8 @@ class SimData:
         file: Model_TTree_v20 = u.open("{}:{}".format(self._path, self._branch))
         return file
     
-    def _parse_data(self, data) -> np.ndarray:
+    @staticmethod
+    def _parse_data(data) -> np.ndarray:
 
         """Parse the data in the file and select the desired items."""
 
