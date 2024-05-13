@@ -91,10 +91,10 @@ class Finder:
         if verbose:
             print(f"\nParams:\n\tBranch = {branch}\n\tKey path = {key_path}\n")
 
-        # if the current recursion depth is greater than two (len(key_path) > 2), and if the last key is the same as its
+        # if the current recursion depth is greater than one (len(key_path) > 1), and if the last key is the same as its
         # previous key, the current search depth is 2 (we are attempting to skip a layer), otherwise it is 1
         depth = 1
-        if len(key_path) > 2:
+        if len(key_path) > 1:
             if key_path[-1] == key_path[-2]:
                 depth = 2
 
@@ -211,7 +211,7 @@ class Finder:
 
             root_entry = (i_root_point, i_primary_layer)
             branch = PointTree(root_entry)
-            filled_branch = self._recurse_branch(branch, [root_entry], verbose=True if root_entry == (6, 0) else False)
+            filled_branch = self._recurse_branch(branch, [root_entry])
 
             track_set = []
             for track in filled_branch.tracks():
