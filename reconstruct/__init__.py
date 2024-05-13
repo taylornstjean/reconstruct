@@ -1,2 +1,1 @@
-from .transform import Transform
-
+from .transform import Finder

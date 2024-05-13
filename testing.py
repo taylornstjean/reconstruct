@@ -44,7 +44,7 @@ def random_lines(n, plate_spacing, pos_resolution):
             points.append(a)
 
     # add noise to data to better match experimental conditions
-    points = np.array(points)
+    points: np.ndarray = np.array(points)
     points += np.random.normal(size=points.shape) * [pos_resolution, pos_resolution, 0, 0]
 
     # save points in case of need to rerun

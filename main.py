@@ -1,46 +1,29 @@
-from reconstruct import Transform
-from testing import random_lines
-from reconstruct.loader import SimData
-from reconstruct.renderer import Plot3D
-import numpy as np
+from reconstruct import Finder
+import time
+from reconstruct.loader import Loader
 
 
 #  -------------------  MAIN DRIVER  -------------------  #
 
-
-def test_transform(plate_spacing, pos_resolution, line_count, rerun=False):
-
-    if not rerun:
-        # generate new points
-        points = random_lines(line_count, plate_spacing, pos_resolution)
-    else:
-        # load last run points
-        points = np.loadtxt("points.txt")
-
-    hough = Transform(points, 5, line_count + 5, plate_spacing, pos_resolution, 0.1 * np.pi / 180, 0.02, plot=True)
-    hough.find_lines()
-
-
-def run_transform(points, plate_spacing, pos_resolution):
-
-    hough = Transform(points, 5, 10, plate_spacing, pos_resolution, 0.1 * np.pi / 180, 4, plot=True)
-    hough.find_lines()
-
-
 def main():
 
-    # test_transform(line_count=10, pos_resolution=0.01, plate_spacing=0.8, rerun=False)
+    time_now = time.time()
 
     items = ["Hit_x", "Hit_z", "Hit_y", "Hit_time"]
-    path = "./data/muons_28pT/20231128/025209/run0.root"  # "./data/muons_27pT/20231116/051933/run0.root"
-    sim_data = SimData(path, items)
+    path = "./data/muons_28pT/20231120/164248/run0.root"  # ./data/muons_32pT/20231204/203837/run0.root, ./data/muons_34pT/20231204/203837/run0.root, ./data/muons_27pT/20231116/051933/run0.root, ./data/muons_50p_mag/20231106/034221/run0.root
+    sim_data = Loader(path, items)
 
-    # plotter = Plot3D()
-    # plotter.points(sim_data.data)
-    # plotter.save("sim_data.html")
-    # plotter.show()
+    print("\n[ METADATA ]\n")
 
-    run_transform(points=sim_data.data, pos_resolution=10, plate_spacing=80)
+    for name, value in sim_data.metadata.items():
+        print("{}: {}".format(name.ljust(20), value))
+
+    print("\n")
+
+    transform = Finder(sim_data)
+    transform.run()
+
+    print("\n--- Complete in {:.4f} seconds ---\n".format(time.time() - time_now))
 
 
 if __name__ == "__main__":

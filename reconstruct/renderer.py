@@ -9,7 +9,8 @@ class Plot3D:
         plot_bgcolor='rgba(0,0,0,1)',
         font_color="white",
         title_font_color="white",
-        legend_title_font_color="white"
+        legend_title_font_color="white",
+
     )
 
     def __init__(self) -> None:
@@ -18,7 +19,7 @@ class Plot3D:
         """
         self._fig: go.Figure = go.Figure(layout=self._layout)
 
-    def points(self, points, color="dodgerblue", size=3) -> None:
+    def points(self, points, color="dodgerblue", size=2) -> None:
         """
         Add points to the plot.
 
@@ -44,6 +45,33 @@ class Plot3D:
             )
         )
 
+    def connected_points(self, points, colorscale="plasma", width=2) -> None:
+        """
+        Add points to the plot.
+
+        :param points: Points to plot.
+        :type points: list | tuple | np.ndarray
+
+        :param colorscale: The plotly colorscale to apply to the set of lines (see plotly documentation for options). Defaults to ``"plasma"``.
+        :type colorscale: str
+
+        :param width: The width of each line. Defaults to ``2``.
+        :type width: int
+        """
+        for line in points:
+            self._fig.add_trace(
+                go.Scatter3d(
+                    x=line[:, 0],
+                    y=line[:, 1],
+                    z=line[:, 2],
+                    mode="lines",
+                    line={
+                        "width": width,
+                        "colorscale": colorscale
+                    }
+                )
+            )
+
     def lines(self, lines, domain, step, colorscale="plasma", width=2) -> None:
         """
         Add lines to the plot.
@@ -51,7 +79,7 @@ class Plot3D:
         :param lines: Points to plot.
         :type lines: list | tuple | np.ndarray
 
-        :param domain: The ``[x,y]`` domains over which to plot each line.
+        :param domain: The ``[x0, x1]`` domains over which to plot each line.
         :type domain: list[float | int]
 
         :param step: The step size for the line plotter.
@@ -63,7 +91,7 @@ class Plot3D:
         :param width: The width of each line. Defaults to ``2``.
         :type width: int
         """
-        v: np.ndarray = np.arange(*domain, step)
+        v: np.ndarray[float | int] = np.arange(*domain, step)
 
         for [point, b] in lines:
             self._fig.add_trace(
