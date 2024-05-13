@@ -5,7 +5,7 @@ from sklearn.neighbors import KDTree
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-import reconstruct.detector as detector
+import reconstruct.data.detector as detector
 
 
 class Loader:

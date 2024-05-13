@@ -6,7 +6,7 @@ from tqdm import tqdm
 import time
 from ordered_set import OrderedSet
 
-from reconstruct import detector
+from reconstruct.data import detector
 
 
 def _float_multiply(n: float, m: float | int):

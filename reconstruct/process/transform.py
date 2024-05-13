@@ -1,14 +1,13 @@
 import numpy as np
 from sklearn.neighbors import KDTree
 from tqdm import tqdm
-from .renderer import Plot3D
+from reconstruct.render.renderer import Plot3D
 import time
 
 
-from reconstruct.geometry import FitHyperPlane
+from .geometry import FitHyperPlane
 from reconstruct import constants
-from reconstruct import detector
-from reconstruct.data import Data, PointTree
+from reconstruct.data import Data, PointTree, detector
 
 
 class Finder:
