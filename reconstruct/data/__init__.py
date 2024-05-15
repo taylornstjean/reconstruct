@@ -1,2 +1,2 @@
-from .data import Data, PointTree
-
+from .data import Data
+from .structure import PointTree

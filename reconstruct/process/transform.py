@@ -1,8 +1,9 @@
 import numpy as np
 from sklearn.neighbors import KDTree
 from tqdm import tqdm
-from reconstruct.render.renderer import Plot3D
+from reconstruct.render import Plot3D
 import time
+from functools import lru_cache
 
 
 from .geometry import FitHyperPlane
@@ -15,32 +16,41 @@ class Finder:
     def __init__(self, sim_data) -> None:
 
         self._points = sim_data.data
+
+        # initialize a Data object which holds information about the detector and the point cloud
         self.data = Data(self._points)
 
         self._sim_data = sim_data
 
+        # primary and secondary cone angles
         self._cone_angle = {
             "primary": 80 * np.pi / 180,
             "secondary": 20 * np.pi / 180
         }
 
+        # doesnt do anything for now
         self._min_points = 5
 
+        # maximum valid rmse for a track
+        self._max_rmse = 10
+
+        # store a record of previously run points
         self._run_points = {
-            t: {} for t in ["ml", "dl", "vl"]
+            t: [] for t in ["ml", "dl", "vl"]
         }
 
+    @lru_cache
     def _get_radius(self, i_root_layer, i_target_layer, cone_angle) -> float:
 
         target_layer = self.data.layer_from_index("ml", i_target_layer)
         base_layer = self.data.layer_from_index("ml", i_root_layer)
 
-        radius: float = ((target_layer - base_layer) * np.tan(cone_angle)) / np.sqrt(i_target_layer)
+        radius: float = ((target_layer - base_layer) * np.tan(cone_angle))
 
         return radius
 
     @staticmethod
-    def _project_point_from_root(root_point, point, layer):
+    def _project_point_from_root(root_point, point, layer) -> np.ndarray:
 
         if np.allclose(root_point, point):
             b = point
@@ -54,25 +64,43 @@ class Finder:
         return projected_point
 
     @staticmethod
-    def _is_valid_detection(root_point, projected_point, query_point, dim):
+    def _is_valid_detection(root_point, projected_point, query_point, dim, verbose) -> bool:
 
-        max_dt = 50
-        min_dt = detector.ml_tracker_z_plate_spacing / constants.c
+        # subtract 0.02 m from the z component to allow for possible spread of detections within the tracker
+        distance = np.sqrt(
+            sum([
+                np.square((query_point[i] - root_point[i]) / 100 - 0.02 if i == 2 else 0) for i in range(3)
+            ])
+        )
+
+        min_dt = distance / constants.c * 1e9
+        max_dt = 6 * min_dt
 
         query_time = query_point[3]
         if dim == 4:
             projected_time = projected_point[3]
-            if np.isclose(query_time, projected_time, atol=4):
+            if verbose:
+                print(f"Projected t = {projected_time}, Query t = {query_time}")
+            if np.isclose(query_time, projected_time, atol=6):
                 return True
+            else:
+                if verbose:
+                    print("Not within projected time window.\n")
         else:
             root_time = root_point[3]
             dt = np.abs(query_time - root_time)
+            if verbose:
+                print(f"Root t = {root_time}, dt = {dt}")
             if max_dt > dt > min_dt:
                 return True
+            else:
+                if verbose:
+                    print(f"Not within physical constraints (min_dt = {min_dt}, max_dt = {max_dt}).\n")
 
         return False
 
-    def _get_search_params(self, _primary_run, i_layer, i_base_layer):
+    @lru_cache
+    def _get_search_params(self, _primary_run, i_layer, i_base_layer) -> tuple[int, KDTree, float]:
 
         dimension = 3 if _primary_run else 4
 
@@ -85,7 +113,9 @@ class Finder:
 
         return dimension, tree, radius
 
-    def _recurse_branch(self, branch: PointTree, key_path: list, verbose=False):
+    def _recurse_branch(self, branch: PointTree, key_path: list, verbose=False) -> PointTree:
+
+        """Recursively populates a branch through the ml tracker from a root point on a defined primary layer."""
 
         if verbose:
             print(f"\nParams:\n\tBranch = {branch}\n\tKey path = {key_path}\n")
@@ -168,19 +198,22 @@ class Finder:
                 print(f"Checking point: {q, i_search_layer}, {self.data.point_from_index('ml', i_search_layer, q)}")
 
             query_point = self.data.point_from_index("ml", i_search_layer, q)
-            if self._is_valid_detection(base_point, projected_point, query_point, dimension):
-                branch.append(key_path, [(q, i_search_layer)])
+            if not self._is_valid_detection(base_point, projected_point, query_point, dimension, verbose):
+                continue
 
-                if verbose:
-                    print(f"Confirmed point.\n")
+            branch.append(key_path, [(q, i_search_layer)])
 
-                # if the search layer is below the highest possible layer, continue recursion
-                # if it is equal to the maximum index, break out of recursion
-                if i_search_layer < len(detector.tracker["ml"]["z"]) - 1:
+            if verbose:
+                print(f"Confirmed point.\n")
 
-                    if verbose:
-                        print(f"Running recursively.")
-                    branch = self._recurse_branch(branch, key_path + [(q, i_search_layer)], verbose)
+            # if the search layer is below the highest possible layer, continue recursion
+            # if it is equal to the maximum index, break out of recursion
+            if not i_search_layer < len(detector.tracker["ml"]["z"]) - 1:
+                continue
+
+            if verbose:
+                print(f"Running recursively.")
+            branch = self._recurse_branch(branch, key_path + [(q, i_search_layer)], verbose)
 
         # if there are no duplicate indices (no layers have been skipped on this key path), the search layer is lower
         # than the highest possible layer, and the root layer is the lowest possible, attempt to find tracks
@@ -197,30 +230,49 @@ class Finder:
 
         return branch
 
-    def find_tracks(self, i_primary_layer) -> list:
+    def _initialize_branch_recursion(self, tracks: dict, i_root_point, i_primary_layer) -> None:
+
+        verbose = False
+        # if (i_root_point, i_primary_layer) == (115, 0):
+        #     verbose = True
+
+        self_verbose = False
+        if self_verbose:
+            print(f"Root: ({i_root_point, i_primary_layer}), {self.data.point_from_index('ml', i_primary_layer, i_root_point)}")
+
+        root_entry = (i_root_point, i_primary_layer)
+        branch = PointTree(root_entry)
+        filled_branch = self._recurse_branch(branch, [root_entry], verbose)
+
+        track_set = []
+        i_track_set = []
+        for track in filled_branch.tracks():
+            if not track:
+                continue
+
+            track_set.append([
+                self.data.point_from_index("ml", lyr, pt) for pt, lyr in track
+            ])
+            i_track_set.append(track)
+
+        if track_set:
+            tracks["point"].append(track_set)
+            tracks["index"].append(i_track_set)
+
+    def find_tracks(self, i_primary_layer) -> dict:
 
         print(f"\n[ Branching from Layer {i_primary_layer}... ]\n")
         time.sleep(0.1)
 
         ml_points = self.data.sorted_points["ml"]["z"]
-        tracks = []
+        tracks = {"point": [], "index": []}
 
         _iter_1 = tqdm(ml_points[i_primary_layer])
         for i_root_point, _ in enumerate(_iter_1):
+            if (i_root_point, i_primary_layer) in self._run_points["ml"]:
+                continue
 
-            root_entry = (i_root_point, i_primary_layer)
-            branch = PointTree(root_entry)
-            filled_branch = self._recurse_branch(branch, [root_entry])
-
-            track_set = []
-            for track in filled_branch.tracks():
-                if track:
-                    track_set.append([
-                        self.data.point_from_index("ml", lyr, pt) for pt, lyr in track
-                    ])
-
-            if track_set:
-                tracks.append(track_set)
+            self._initialize_branch_recursion(tracks, i_root_point, i_primary_layer)
 
         return tracks
 
@@ -229,38 +281,42 @@ class Finder:
         plotter = Plot3D()
 
         plotter.points(self._points)
-        plotter.lines(line_params, [0, 28000], 6500)
+        plotter.lines(line_params, [6500, 28000], 6500)
 
         if save:
             plotter.save("track_fit.html")
 
         plotter.show()
 
-    def run(self):
+    def run(self) -> None:
+
+        def _track_valid(e):
+            if e < self._max_rmse:
+                return True
+            return False
 
         for d in [3, 4]:
             self.data.generate_query_trees(d)
 
-        all_tracks = [self.find_tracks(pl) for pl in [0, 1]]
         line_params = []
+        for primary_layer in range(2):
 
-        def _already_found(lp, lp_set):
-            for plp in lp_set:
-                if np.allclose(lp[0], plp[0], atol=200) and np.allclose(lp[1], plp[1], atol=0.02):
-                    return True
-            return False
+            # this needs to be tweaked a bit when implementing multiprocessing
+            __track_dict = self.find_tracks(primary_layer)
 
-        for track_set in all_tracks:
-            for tracks in track_set:
+            _iter = tqdm(enumerate(__track_dict["point"]))
+            for i, tracks in _iter:
 
                 refinery = Refinery(tracks)
-                _, lps = refinery.minimize_rmse()
+                rmse, track, lps = refinery.minimize_rmse()
 
-                if line_params:
-                    if not _already_found(lps, line_params):
-                        line_params.append(lps)
-                else:
-                    line_params.append(lps)
+                if not _track_valid(rmse):
+                    continue
+
+                line_params.append(lps)
+                for t in __track_dict["index"][i]:
+                    for p in t:
+                        self._run_points["ml"].append(p)
 
         detections = len(line_params)
 
@@ -276,7 +332,7 @@ class Refinery:
     def __init__(self, tracks: list) -> None:
         self._tracks = tracks
 
-    def minimize_rmse(self):
+    def minimize_rmse(self) -> tuple[float, np.ndarray, np.ndarray]:
 
         rmse = []
         pb = []
@@ -288,4 +344,4 @@ class Refinery:
 
         p_min_rmse = min(range(len(rmse)), key=rmse.__getitem__)
 
-        return self._tracks[p_min_rmse], np.array(pb[p_min_rmse])
+        return rmse[p_min_rmse], self._tracks[p_min_rmse], np.array(pb[p_min_rmse])

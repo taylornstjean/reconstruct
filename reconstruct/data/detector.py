@@ -2,7 +2,7 @@
 
 # PROPERTIES
 
-# layers ordered from largest to smallest value
+# layers ordered from smallest to largest value
 # units are cm unless specified otherwise
 
 tracker = {

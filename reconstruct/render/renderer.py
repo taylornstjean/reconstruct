@@ -5,12 +5,17 @@ import numpy as np
 
 class Plot3D:
     _layout: Layout = Layout(
-        paper_bgcolor='rgba(0,0,0,1)',
-        plot_bgcolor='rgba(0,0,0,1)',
+        paper_bgcolor='black',
+        plot_bgcolor='black',
         font_color="white",
         title_font_color="white",
         legend_title_font_color="white",
-
+        scene=dict(
+            aspectmode="data",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False)
+        ),
     )
 
     def __init__(self) -> None:
